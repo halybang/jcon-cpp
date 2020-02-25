@@ -46,12 +46,17 @@ void JsonRpcWebSocket::setupSocket()
             });
 }
 
-void JsonRpcWebSocket::connectToHost(QString host, int port)
+void JsonRpcWebSocket::connectToHost(const QString& host, int port)
 {
     QUrl url;
     url.setScheme("ws");
     url.setHost(host);
     url.setPort(port);
+    m_socket->open(url);
+}
+
+void JsonRpcWebSocket::connectToUrl(const QUrl& url)
+{
     m_socket->open(url);
 }
 
@@ -61,7 +66,7 @@ bool JsonRpcWebSocket::waitForConnected(int msecs)
     QSignalSpy spy(m_socket, &QWebSocket::connected);
     timer.start();
     while (spy.isEmpty() && timer.elapsed() < msecs) {
-        QCoreApplication::processEvents();
+        QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
     }
     return !spy.isEmpty();
 }
@@ -76,9 +81,9 @@ bool JsonRpcWebSocket::isConnected() const
     return m_socket->state() == QAbstractSocket::ConnectedState;
 }
 
-void JsonRpcWebSocket::send(const QByteArray& data)
+size_t JsonRpcWebSocket::send(const QByteArray& data)
 {
-    m_socket->sendTextMessage(data);
+    return m_socket->sendTextMessage(data);
 }
 
 QString JsonRpcWebSocket::errorString() const

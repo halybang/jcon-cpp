@@ -1,5 +1,4 @@
-#ifndef JSON_RPC_LOGGER_H
-#define JSON_RPC_LOGGER_H
+#pragma once
 
 #include "jcon.h"
 
@@ -13,11 +12,10 @@ public:
     JsonRpcLogger();
     virtual ~JsonRpcLogger();
 
+    virtual void logDebug(const QString& message) = 0;
     virtual void logInfo(const QString& message) = 0;
     virtual void logWarning(const QString& message) = 0;
     virtual void logError(const QString& message) = 0;
 };
 
 }
-
-#endif

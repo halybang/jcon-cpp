@@ -19,16 +19,27 @@ JsonRpcTcpServer::~JsonRpcTcpServer()
     close();
 }
 
-void JsonRpcTcpServer::listen(int port)
+bool JsonRpcTcpServer::listen(int port)
 {
-    logInfo(QString("listening on port %2").arg(port));
-    m_server.listen(QHostAddress::Any, port);
+    logInfo(QString("listening on port %1").arg(port));
+    if (!m_server.listen(QHostAddress::AnyIPv4, port)) {
+        auto msg = QString("Error listening on port %1").arg(port);
+        logError(qPrintable(msg));
+        return false;
+    }
+    return true;
 }
 
-void JsonRpcTcpServer::listen(const QHostAddress& addr, int port)
+bool JsonRpcTcpServer::listen(const QHostAddress& addr, int port)
 {
-    logInfo(QString("listening on port %2").arg(port));
-    m_server.listen(addr, port);
+    logInfo(QString("listening on port %1").arg(port));
+    if (!m_server.listen(addr, port)) {
+        auto msg = QString("Error listening on %1:%2")
+            .arg(addr.toString()).arg(port);
+        logError(qPrintable(msg));
+        return false;
+    } 
+    return true;
 }
 
 void JsonRpcTcpServer::close()
@@ -48,6 +59,7 @@ void JsonRpcTcpServer::newConnection()
     JCON_ASSERT(m_server.hasPendingConnections());
     if (m_server.hasPendingConnections()) {
         QTcpSocket* tcp_socket = m_server.nextPendingConnection();
+        JCON_ASSERT(m_server.nextPendingConnection() == nullptr);
 
         JCON_ASSERT(tcp_socket);
         if (!tcp_socket) {

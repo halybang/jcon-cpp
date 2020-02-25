@@ -1,5 +1,4 @@
-#ifndef JSON_RPC_WEBSOCKET_H
-#define JSON_RPC_WEBSOCKET_H
+#pragma once
 
 #include "jcon.h"
 #include "json_rpc_socket.h"
@@ -29,11 +28,12 @@ public:
 
     virtual ~JsonRpcWebSocket();
 
-    void connectToHost(QString host, int port) override;
+    void connectToHost(const QString& host, int port) override;
+    void connectToUrl(const QUrl& url) override;
     bool waitForConnected(int msecs) override;
     void disconnectFromHost() override;
     bool isConnected() const override;
-    void send(const QByteArray& data) override;
+    size_t send(const QByteArray& data) override;
     QString errorString() const override;
     QHostAddress localAddress() const override;
     int localPort() const override;
@@ -50,5 +50,3 @@ private:
 };
 
 }
-
-#endif

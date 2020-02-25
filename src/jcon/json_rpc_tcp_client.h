@@ -1,5 +1,4 @@
-#ifndef JSON_RPC_TCP_CLIENT_H
-#define JSON_RPC_TCP_CLIENT_H
+#pragma once
 
 #include "json_rpc_client.h"
 
@@ -11,10 +10,10 @@ class JCON_API JsonRpcTcpClient : public JsonRpcClient
 
 public:
     JsonRpcTcpClient(QObject* parent = nullptr,
-                     std::shared_ptr<JsonRpcLogger> logger = nullptr);
+                     std::shared_ptr<JsonRpcLogger> logger = nullptr,
+                     int call_timeout_ms = 60000);
+
     virtual ~JsonRpcTcpClient();
 };
 
 }
-
-#endif

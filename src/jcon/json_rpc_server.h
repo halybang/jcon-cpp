@@ -1,5 +1,4 @@
-#ifndef JSONRPCSERVER_H
-#define JSONRPCSERVER_H
+#pragma once
 
 #include "jcon.h"
 #include "json_rpc_logger.h"
@@ -18,16 +17,31 @@ class JCON_API JsonRpcServer : public QObject
     Q_OBJECT
 
 public:
+    using ServiceMap = QMap<QObject*, QString>;
+
     JsonRpcServer(QObject* parent = nullptr,
                   std::shared_ptr<JsonRpcLogger> logger = nullptr);
     virtual ~JsonRpcServer();
 
-    // takes any number of unique_ptrs to QObjects
-    template<typename T, typename... Ts>
-    void registerServices(T&& s, Ts&&... ss);
+    /**
+     * Register services containing RPC method invocation handlers.
+     *
+     * @param[in] services A list of services to register.
+     */
+    void registerServices(const QObjectList& services);
 
-    virtual void listen(int port) = 0;
-    virtual void listen(const QHostAddress& addr, int port) = 0;
+    /**
+     * Register namespaced services containing RPC method invocation handlers.
+     *
+     * @param[in] services A map of (service, namespace) pairs to register.
+     * @param[in] ns_separator String that is used to separate namespaces from
+     *                         method name.
+     */
+    void registerServices(const ServiceMap& services,
+                          const QString& ns_separator = "/");
+
+    virtual bool listen(int port) = 0;
+    virtual bool listen(const QHostAddress& addr, int port) = 0;
 
     virtual void close() = 0;
 
@@ -55,12 +69,13 @@ protected:
 private:
     static const QString InvalidRequestId;
 
-    void registerServices() {}
-
     bool dispatch(const QString& method_name,
                   const QVariant& params,
                   const QString& request_id,
                   QVariant& return_value);
+
+    std::pair<QString, QString>
+    namespaceAndMethodName(const QString& full_name);
 
     bool call(QObject* object,
               const QMetaMethod& meta_method,
@@ -71,7 +86,6 @@ private:
               const QMetaMethod& meta_method,
               const QVariantMap& args,
               QVariant& return_value);
-
 
     bool convertArgs(const QMetaMethod& meta_method,
                      const QVariantList& args,
@@ -94,16 +108,8 @@ private:
                                       const QString& message);
 
     std::shared_ptr<JsonRpcLogger> m_logger;
-    std::vector<std::unique_ptr<QObject>> m_services;
+    ServiceMap m_services;
+    QString m_ns_separator;
 };
 
-template<typename T, typename... Ts>
-void JsonRpcServer::registerServices(T&& s, Ts&&... ss)
-{
-    m_services.push_back(std::move(s));
-    registerServices(ss...);
 }
-
-}
-
-#endif

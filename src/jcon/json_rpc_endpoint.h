@@ -1,5 +1,4 @@
-#ifndef JSONRPCENDPOINT_H
-#define JSONRPCENDPOINT_H
+#pragma once
 
 #include "jcon.h"
 #include "json_rpc_logger.h"
@@ -11,6 +10,7 @@
 
 class QJsonObject;
 class QTcpSocket;
+class QUrl;
 
 namespace jcon {
 
@@ -30,6 +30,8 @@ public:
 
     bool connectToHost(const QString& host, int port, int msecs = 5000);
     void connectToHostAsync(const QString& host, int port);
+    bool connectToUrl(const QUrl& url, int msecs = 5000);
+    void connectToUrlAsync(const QUrl& url);
     void disconnectFromHost();
     bool isConnected() const;
 
@@ -72,5 +74,3 @@ private:
 };
 
 }
-
-#endif

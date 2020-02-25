@@ -5,11 +5,9 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QTcpSocket>
+#include <QUrl>
 
 namespace jcon {
-
-/// Remove \p n bytes from \p bytes.
-static QByteArray chopLeft(const QByteArray& bytes, int n);
 
 JsonRpcEndpoint::JsonRpcEndpoint(std::shared_ptr<JsonRpcSocket> socket,
                                  std::shared_ptr<JsonRpcLogger> logger,
@@ -49,13 +47,39 @@ bool JsonRpcEndpoint::connectToHost(const QString& host, int port, int msecs)
         return false;
     }
 
-    m_logger->logInfo(QString("connected to server %1:%2").arg(host).arg(port));
+    m_logger->logInfo(QString("connected to JSON RPC server %1:%2 "
+                              "(local port: %3)")
+                      .arg(host).arg(port).arg(m_socket->localPort()));
     return true;
 }
 
 void JsonRpcEndpoint::connectToHostAsync(const QString& host, int port)
 {
     m_socket->connectToHost(host, port);
+}
+
+bool JsonRpcEndpoint::connectToUrl(const QUrl& url, int msecs)
+{
+    m_logger->logInfo(QString("connecting to JSON RPC server at %1")
+                      .arg(url.toString()));
+
+    m_socket->connectToUrl(url);
+
+    if (!m_socket->waitForConnected(msecs)) {
+        m_logger->logError("could not connect to JSON RPC server: " +
+                           m_socket->errorString());
+        return false;
+    }
+
+    m_logger->logInfo(QString("connected to JSON RPC server %1 "
+                              "(local port: %3)")
+                      .arg(url.toString()).arg(m_socket->localPort()));
+    return true;
+}
+
+void JsonRpcEndpoint::connectToUrlAsync(const QUrl& url)
+{
+    m_socket->connectToUrl(url);
 }
 
 void JsonRpcEndpoint::disconnectFromHost()
@@ -88,7 +112,6 @@ int JsonRpcEndpoint::peerPort() const
     return m_socket->peerPort();
 }
 
-
 void JsonRpcEndpoint::send(const QJsonDocument& doc)
 {
     QByteArray bytes = doc.toJson();
@@ -98,55 +121,61 @@ void JsonRpcEndpoint::send(const QJsonDocument& doc)
 void JsonRpcEndpoint::dataReady(const QByteArray& bytes, QObject* socket)
 {
     JCON_ASSERT(bytes.length() > 0);
-    m_recv_buffer += bytes;
+    // Copying data to new buffer, because the endpoint buffer may be
+    // invalidated at any time by closing socket from outside which will cause
+    // an exception.
+    m_recv_buffer += QByteArray::fromRawData(bytes.data(), bytes.size());
     m_recv_buffer = processBuffer(m_recv_buffer.trimmed(), socket);
 }
 
-QByteArray JsonRpcEndpoint::processBuffer(const QByteArray& buffer,
+QByteArray JsonRpcEndpoint::processBuffer(const QByteArray& buf,
                                           QObject* socket)
 {
-    QByteArray buf(buffer);
-
     JCON_ASSERT(buf[0] == '{');
+    if (buf[0] != '{') {
+        m_logger->logError("Malformed request");
+        return nullptr;
+    }
 
-    bool in_string = false;
+    bool in_string = false, in_esc = false;
     int brace_nesting_level = 0;
-    QByteArray json_obj;
+    int start = 0;
 
     int i = 0;
     while (i < buf.length() ) {
         const char curr_ch = buf[i++];
 
-        if (curr_ch == '"')
+        if (curr_ch == '"' && !in_esc) {
             in_string = !in_string;
+            continue;
+        }
 
         if (!in_string) {
             if (curr_ch == '{')
                 ++brace_nesting_level;
-
-            if (curr_ch == '}') {
+            else if (curr_ch == '}') {
                 --brace_nesting_level;
                 JCON_ASSERT(brace_nesting_level >= 0);
 
                 if (brace_nesting_level == 0) {
-                    auto doc = QJsonDocument::fromJson(buf.left(i));
+                    auto doc = QJsonDocument::fromJson(buf.mid(start, i - start));
                     JCON_ASSERT(!doc.isNull());
                     JCON_ASSERT(doc.isObject());
                     if (doc.isObject())
                         emit jsonObjectReceived(doc.object(), socket);
-                    buf = chopLeft(buf, i);
-                    i = 0;
+                    start = i;
                     continue;
                 }
             }
+        } else {
+            // in_string == true, maintain in_esc flag (which can only be latched true when in_string)
+            if (curr_ch == '\\' && !in_esc)
+                in_esc = true;
+            else
+                in_esc = false;
         }
     }
-    return buf;
-}
-
-QByteArray chopLeft(const QByteArray& bytes, int n)
-{
-    return bytes.right(bytes.length() - n);
+    return start > 0 ? buf.mid(start) : buf;
 }
 
 }

@@ -1,14 +1,21 @@
 #include "json_rpc_server.h"
+#include "jcon_assert.h"
 #include "json_rpc_endpoint.h"
 #include "json_rpc_error.h"
 #include "json_rpc_file_logger.h"
-#include "jcon_assert.h"
+#include "string_util.h"
 
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QVariant>
 #include <QMetaMethod>
+
+namespace {
+    QString logInvoke(const QMetaMethod& meta_method,
+                      const QVariantList& args,
+                      const QVariant& return_value);
+}
 
 namespace jcon {
 
@@ -28,6 +35,22 @@ JsonRpcServer::~JsonRpcServer()
 {
 }
 
+void JsonRpcServer::registerServices(const QObjectList& services)
+{
+    m_services.clear();
+    for (auto s : services) {
+        m_services[s] = "";
+    }
+    m_ns_separator = "";
+}
+
+void JsonRpcServer::registerServices(const ServiceMap& services,
+                                     const QString& ns_separator)
+{
+    m_services = services;
+    m_ns_separator = ns_separator;
+}
+
 void JsonRpcServer::jsonRequestReceived(const QJsonObject& request,
                                         QObject* socket)
 {
@@ -44,8 +67,7 @@ void JsonRpcServer::jsonRequestReceived(const QJsonObject& request,
     }
 
     QVariant params = request.value("params").toVariant();
-
-    QString request_id = request.value("id").toString(InvalidRequestId);
+    QString request_id = request.value("id").toVariant().toString();
 
     QVariant return_value;
     if (!dispatch(method_name, params, request_id, return_value)) {
@@ -67,6 +89,7 @@ void JsonRpcServer::jsonRequestReceived(const QJsonObject& request,
             }
 
             endpoint->send(error);
+            return;
         }
     }
 
@@ -91,27 +114,40 @@ bool JsonRpcServer::dispatch(const QString& method_name,
                              const QString& request_id,
                              QVariant& return_value)
 {
-    for (auto& s : m_services) {
+    QString method_ns;
+    QString method_name_without_ns;
+    std::tie(method_ns, method_name_without_ns) =
+        namespaceAndMethodName(method_name);
+
+    QObjectList services;
+    for (auto it = m_services.begin(); it != m_services.end(); ++it) {
+        QObject* s = it.key();
+        QString ns = it.value();
+        if (ns.isEmpty() || ns == method_ns) {
+            services.push_back(s);
+        }
+    }
+
+    for (auto s : services) {
         const QMetaObject* meta_obj = s->metaObject();
-        for (int i = 0; i < meta_obj->methodCount(); ++i) {
+        for (int i = meta_obj->methodOffset();
+             i < meta_obj->methodCount();
+             ++i)
+        {
             auto meta_method = meta_obj->method(i);
-            if (meta_method.name() == method_name) {
+            if (meta_method.name() == method_name_without_ns) {
                 if (params.type() == QVariant::List ||
                     params.type() == QVariant::StringList)
                 {
-                    if (call(s.get(),
-                             meta_method,
-                             params.toList(),
-                             return_value))
-                    {
+                    if (call(s, meta_method, params.toList(), return_value)) {
                         return true;
                     }
                 } else if (params.type() == QVariant::Map) {
-                    if (call(s.get(),
-                             meta_method,
-                             params.toMap(),
-                             return_value))
-                    {
+                    if (call(s, meta_method, params.toMap(), return_value)) {
+                        return true;
+                    }
+                } else if (params.type() == QVariant::Invalid) {
+                    if (call(s, meta_method, QVariantList(), return_value)) {
                         return true;
                     }
                 }
@@ -119,6 +155,24 @@ bool JsonRpcServer::dispatch(const QString& method_name,
         }
     }
     return false;
+}
+
+std::pair<QString, QString>
+JsonRpcServer::namespaceAndMethodName(const QString& full_name)
+{
+    if (m_ns_separator.isEmpty()) {
+        return {"", full_name};
+    }
+    QString ns;
+    QString method_name;
+    int li = full_name.lastIndexOf(m_ns_separator);
+    if (li > 0) {
+        ns = full_name.left(li);
+        method_name = full_name.mid(li + m_ns_separator.length());
+    } else {
+        return {"", full_name};
+    }
+    return {ns, method_name};
 }
 
 bool JsonRpcServer::call(QObject* object,
@@ -155,21 +209,28 @@ bool JsonRpcServer::convertArgs(const QMetaMethod& meta_method,
                                 const QVariantList& args,
                                 QVariantList& converted_args)
 {
-    QList<QByteArray> method_types = meta_method.parameterTypes();
-    if (args.size() != method_types.size()) {
-        // logError(QString("wrong number of arguments to method %1 -- "
-        //                  "expected %2 arguments, but got %3")
-        //          .arg(meta_method.methodSignature())
-        //          .arg(meta_method.parameterCount())
-        //          .arg(args.size()));
+    QList<QByteArray> param_types = meta_method.parameterTypes();
+    if (args.size() != param_types.size()) {
+        logError(QString("wrong number of arguments to method %1 -- "
+                         "expected %2 arguments, but got %3")
+                 .arg(QString(meta_method.methodSignature()))
+                 .arg(meta_method.parameterCount())
+                 .arg(args.size()));
         return false;
     }
 
-    for (int i = 0; i < method_types.size(); i++) {
+    for (int i = 0; i < param_types.size(); i++) {
         const QVariant& arg = args.at(i);
+        if (!arg.isValid()) {
+            logError(QString("argument %1 of %2 to method %3 is invalid")
+                     .arg(i + 1)
+                     .arg(param_types.size())
+                     .arg(QString(meta_method.methodSignature())));
+            return false;
+        }
 
         QByteArray arg_type_name = arg.typeName();
-        QByteArray param_type_name = method_types.at(i);
+        QByteArray param_type_name = param_types.at(i);
 
         QVariant::Type param_type = QVariant::nameToType(param_type_name);
 
@@ -196,11 +257,11 @@ bool JsonRpcServer::convertArgs(const QMetaMethod& meta_method,
 {
     QList<QByteArray> param_types = meta_method.parameterTypes();
     if (args.size() != param_types.size()) {
-        // logError(QString("wrong number of arguments to method %1 -- "
-        //                  "expected %2 arguments, but got %3")
-        //          .arg(meta_method.methodSignature())
-        //          .arg(meta_method.parameterCount())
-        //          .arg(args.size()));
+        logError(QString("wrong number of arguments to method %1 -- "
+                         "expected %2 arguments, but got %3")
+                 .arg(QString(meta_method.methodSignature()))
+                 .arg(meta_method.parameterCount())
+                 .arg(args.size()));
         return false;
     }
 
@@ -211,6 +272,13 @@ bool JsonRpcServer::convertArgs(const QMetaMethod& meta_method,
             return false;
         }
         const QVariant& arg = args.value(param_name);
+        if (!arg.isValid()) {
+            logError(QString("argument %1 of %2 to method %3 is invalid")
+                     .arg(i + 1)
+                     .arg(param_types.size())
+                     .arg(QString(meta_method.methodSignature())));
+            return false;
+        }
 
         QByteArray arg_type_name = arg.typeName();
         QByteArray param_type_name = param_types.at(i);
@@ -291,6 +359,8 @@ bool JsonRpcServer::doCall(QObject* object,
         return false;
     }
 
+    logInfo(logInvoke(meta_method, converted_args, return_value));
+
     return true;
 }
 
@@ -313,10 +383,14 @@ QJsonDocument JsonRpcServer::createResponse(const QString& request_id,
         res_json_obj["result"] = ret_doc.object();
     } else if (return_value.type() == QVariant::Int) {
         res_json_obj["result"] = return_value.toInt();
+    } else if (return_value.type() == QVariant::LongLong) {
+        res_json_obj["result"] = return_value.toLongLong();
     } else if (return_value.type() == QVariant::Double) {
         res_json_obj["result"] = return_value.toDouble();
     } else if (return_value.type() == QVariant::Bool) {
         res_json_obj["result"] = return_value.toBool();
+    } else if (return_value.type() == QVariant::String) {
+        res_json_obj["result"] = return_value.toString();
     } else {
         auto msg =
             QString("method '%1' has unknown return type: %2")
@@ -356,6 +430,42 @@ void JsonRpcServer::logInfo(const QString& msg)
 void JsonRpcServer::logError(const QString& msg)
 {
     m_logger->logError("JSON RPC server error: " + msg);
+}
+
+}
+
+namespace {
+
+QString logInvoke(const QMetaMethod& meta_method,
+                  const QVariantList& args,
+                  const QVariant& return_value)
+{
+    const auto ns = meta_method.parameterNames();
+    auto ps = jcon::variantListToStringList(args);
+    QStringList args_sl;
+    std::transform(ns.begin(), ns.end(), ps.begin(),
+                   std::back_inserter(args_sl),
+                   [](auto x, auto y) -> QString {
+                       return static_cast<QString>(x) + ": " + y;
+                   }
+        );
+
+    auto msg = QString("%1 invoked ")
+        .arg(static_cast<QString>(meta_method.name()));
+
+    if (args_sl.empty()) {
+        msg += "without arguments";
+    } else {
+        msg += QString("with argument%1: %2")
+            .arg(args_sl.size() == 1 ? "" : "s")
+            .arg(args_sl.join(", "));
+    }
+
+    if (return_value.isValid()) {
+        msg += " -> returning: " + jcon::variantToString(return_value);
+    }
+
+    return msg;
 }
 
 }

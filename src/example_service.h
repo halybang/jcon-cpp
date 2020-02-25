@@ -1,6 +1,4 @@
-#ifndef EXAMPLESERVICE_H
-#define EXAMPLESERVICE_H
-
+#pragma once
 #include <QObject>
 
 class ExampleService : public QObject
@@ -12,7 +10,7 @@ public:
     virtual ~ExampleService();
 
     Q_INVOKABLE int getRandomInt(int limit);
+    Q_INVOKABLE QString printMessage(const QString& msg);
+    Q_INVOKABLE void printNotification(const QString& msg);
+    Q_INVOKABLE void namedParams(QString& msg, int answer);
 };
-
-
-#endif

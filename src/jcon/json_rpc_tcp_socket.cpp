@@ -1,10 +1,12 @@
 #include "json_rpc_tcp_socket.h"
 #include "jcon_assert.h"
 
+#include <QUrl>
+
 namespace jcon {
 
 JsonRpcTcpSocket::JsonRpcTcpSocket()
-    : m_socket(new QTcpSocket)
+    : m_socket(new QTcpSocket(this))
 {
     setupSocket();
 }
@@ -18,7 +20,6 @@ JsonRpcTcpSocket::JsonRpcTcpSocket(QTcpSocket* socket)
 JsonRpcTcpSocket::~JsonRpcTcpSocket()
 {
     m_socket->disconnect(this);
-    m_socket->deleteLater();
 }
 
 void JsonRpcTcpSocket::setupSocket()
@@ -45,9 +46,16 @@ void JsonRpcTcpSocket::setupSocket()
             });
 }
 
-void JsonRpcTcpSocket::connectToHost(QString host, int port)
+void JsonRpcTcpSocket::connectToHost(const QString& host, int port)
 {
-    m_socket->connectToHost(host, port);
+    m_socket->connectToHost(host, port,
+                            QIODevice::ReadWrite,
+                            QAbstractSocket::IPv4Protocol);
+}
+
+void JsonRpcTcpSocket::connectToUrl(const QUrl& url)
+{
+    connectToHost(url.host(), url.port());
 }
 
 bool JsonRpcTcpSocket::waitForConnected(int msecs)
@@ -66,9 +74,11 @@ bool JsonRpcTcpSocket::isConnected() const
     return m_socket->state() == QAbstractSocket::ConnectedState;
 }
 
-void JsonRpcTcpSocket::send(const QByteArray& data)
+size_t JsonRpcTcpSocket::send(const QByteArray& data)
 {
-    m_socket->write(data);
+    auto sz = m_socket->write(data);
+    m_socket->flush();
+    return sz;
 }
 
 QString JsonRpcTcpSocket::errorString() const
